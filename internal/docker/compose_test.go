@@ -243,7 +243,7 @@ func TestDeployCompose(t *testing.T) {
 
 	dockerClient := dockerCli.Client()
 
-	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test")
+	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test", c.RetryWindow)
 	if err != nil {
 		if errors.Is(err, bitwardensecretsmanager.ErrNotSupported) {
 			t.Skip(err.Error())
@@ -1934,7 +1934,7 @@ func TestInjectSecretsToProject(t *testing.T) {
 				t.Skip("Skipping test because secret provider is not configured in app config")
 			}
 
-			secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test")
+			secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test", c.RetryWindow)
 			if err != nil {
 				if tc.expectError.initialization {
 					t.Logf("expected initialization error: %s", err.Error())

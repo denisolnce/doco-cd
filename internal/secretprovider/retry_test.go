@@ -3,8 +3,12 @@ package secretprovider
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	secrettypes "github.com/kimdre/doco-cd/internal/secretprovider/types"
 )
@@ -44,6 +48,9 @@ func (m *mockSecretProvider) ResolveSecretReferences(ctx context.Context, secret
 var (
 	errRateLimit  = errors.New("API error: Received error message from server: [429 Too Many Requests]")
 	errPermission = errors.New("access denied: insufficient permissions")
+
+	// testWindow is long enough for the two or three retries the tests need.
+	testWindow = 5 * time.Second
 )
 
 func TestRetryingSecretProvider_GetSecret_SuccessFirstTry(t *testing.T) {
@@ -56,7 +63,7 @@ func TestRetryingSecretProvider_GetSecret_SuccessFirstTry(t *testing.T) {
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	got, err := subject.GetSecret(t.Context(), "id-1")
 	if err != nil {
@@ -88,7 +95,7 @@ func TestRetryingSecretProvider_GetSecret_RetriesOnRateLimit(t *testing.T) {
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	got, err := subject.GetSecret(t.Context(), "id-1")
 	if err != nil {
@@ -114,7 +121,7 @@ func TestRetryingSecretProvider_GetSecret_NoRetryOnNonRetryableError(t *testing.
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	_, err := subject.GetSecret(t.Context(), "id-1")
 	if err == nil {
@@ -136,16 +143,15 @@ func TestRetryingSecretProvider_GetSecret_ExhaustsRetries(t *testing.T) {
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, 600*time.Millisecond)
 
 	_, err := subject.GetSecret(t.Context(), "id-1")
 	if err == nil {
 		t.Fatal("expected error after exhausting retries, got nil")
 	}
 
-	// retrier is configured with 5 attempts
-	if calls := mock.getSecretCalls.Load(); calls != 5 {
-		t.Errorf("expected 5 calls (all attempts exhausted), got %d", calls)
+	if calls := mock.getSecretCalls.Load(); calls < 2 {
+		t.Errorf("expected at least 2 calls before the window closed, got %d", calls)
 	}
 }
 
@@ -170,7 +176,7 @@ func TestRetryingSecretProvider_GetSecrets_RetriesOnRateLimit(t *testing.T) {
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	got, err := subject.GetSecrets(t.Context(), []string{"a", "b"})
 	if err != nil {
@@ -207,7 +213,7 @@ func TestRetryingSecretProvider_ResolveSecretReferences_RetriesOnRateLimit(t *te
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	input := map[string]string{"ENV_A": "secret-id-a", "ENV_B": "secret-id-b"}
 
@@ -256,7 +262,7 @@ func TestRetryingSecretProvider_ResolveSecretReferences_PreservesInputOnRetry(t 
 		},
 	}
 
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	input := map[string]string{"ENV_A": "secret-id-a"}
 
@@ -270,7 +276,7 @@ func TestRetryingSecretProvider_Name(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockSecretProvider{name: "bitwarden_sm"}
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	if got := subject.Name(); got != "bitwarden_sm" {
 		t.Errorf("got %q, want %q", got, "bitwarden_sm")
@@ -281,7 +287,7 @@ func TestRetryingSecretProvider_Close(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockSecretProvider{name: "test"}
-	subject := NewRetryingSecretProvider(mock)
+	subject := NewRetryingSecretProvider(mock, testWindow)
 
 	subject.Close()
 
@@ -289,6 +295,12 @@ func TestRetryingSecretProvider_Close(t *testing.T) {
 		t.Errorf("expected Close to be called once, got %d", calls)
 	}
 }
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
 
 func TestIsRetryable(t *testing.T) {
 	t.Parallel()
@@ -317,8 +329,40 @@ func TestIsRetryable(t *testing.T) {
 			err:  errors.New(`API error: Received error message from server: [429 Too Many Requests] {"message":"Slow down! Too many requests. Try again in 1s."}`),
 			want: true,
 		},
+		"503 from bitwarden": {
+			err:  errors.New("API error: Received error message from server: [503 Service Unavailable]"),
+			want: true,
+		},
+		"500 from aws": {
+			err:  errors.New("operation error Secrets Manager: GetSecretValue, https response error StatusCode: 500, InternalServiceError"),
+			want: true,
+		},
+		"bad gateway": {
+			err:  errors.New("502 Bad Gateway"),
+			want: true,
+		},
+		"tls handshake timeout string": {
+			err:  errors.New("Post \"https://api.bitwarden.com/identity/connect/token\": net/http: TLS handshake timeout"),
+			want: true,
+		},
+		"url error": {
+			err:  &url.Error{Op: "Get", URL: "https://vault.example.com", Err: errors.New("connection refused")},
+			want: true,
+		},
+		"net timeout": {
+			err:  fmt.Errorf("resolve: %w", &net.OpError{Op: "dial", Err: timeoutError{}}),
+			want: true,
+		},
+		"connection reset": {
+			err:  errors.New("read tcp 10.0.0.1:443: connection reset by peer"),
+			want: true,
+		},
 		"permission error": {
 			err:  errPermission,
+			want: false,
+		},
+		"not found": {
+			err:  errors.New("secret not found: 404"),
 			want: false,
 		},
 		"generic error": {

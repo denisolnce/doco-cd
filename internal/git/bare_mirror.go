@@ -197,7 +197,7 @@ func cloneBareMirrorLocked(path, url, ref string, skipTLSVerify bool, proxyOpts 
 func cloneBareWithRetry(path string, opts *git.CloneOptions) (*git.Repository, error) {
 	var repo *git.Repository
 
-	err := retrier.Do(func() error {
+	err := retrier().Do(func() error {
 		var err error
 
 		repo, err = git.PlainClone(path, true, opts)

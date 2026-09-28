@@ -133,7 +133,7 @@ func TestDeploy(t *testing.T) {
 		}
 	})
 
-	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test")
+	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test", c.RetryWindow)
 	if err != nil {
 		if errors.Is(err, bitwardensecretsmanager.ErrNotSupported) {
 			t.Skip(err.Error())

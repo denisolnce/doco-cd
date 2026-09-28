@@ -377,6 +377,8 @@ func run() error {
 		},
 	)
 
+	git.SetRetryWindow(c.RetryWindow)
+
 	// Initialize SSH agent with the global and domain scoped SSH keys, if any are configured
 	sshKeys := []ssh.KeyRecord{{PrivateKey: c.SSHPrivateKey, Passphrase: c.SSHPrivateKeyPassphrase}}
 	for _, scoped := range c.GitAuthDomains {
@@ -386,7 +388,7 @@ func run() error {
 	ssh.RegisterSSHAgent(ctx, log.Logger, sshKeys)
 
 	// Initialize the secret provider
-	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, app.Version)
+	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, app.Version, c.RetryWindow)
 	if err != nil {
 		log.Critical("failed to initialize secret provider", logger.ErrAttr(err))
 

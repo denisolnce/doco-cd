@@ -36,6 +36,17 @@ func TestGetConfig(t *testing.T) {
 			expectedErr:   nil,
 		},
 		{
+			name: "negative retry window",
+			envVars: map[string]string{
+				"LOG_LEVEL":        "info",
+				"WEBHOOK_SECRET":   "secret",
+				"GIT_ACCESS_TOKEN": "token",
+				"RETRY_WINDOW":     "-1s",
+			},
+			dockerSecrets: nil,
+			expectedErr:   config.ErrParseConfigFailed,
+		},
+		{
 			name: "invalid log level",
 			envVars: map[string]string{
 				"LOG_LEVEL":        "invalid",

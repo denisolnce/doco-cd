@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/avast/retry-go/v5"
@@ -16,7 +18,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
+	"github.com/kimdre/doco-cd/internal/common/retrywindow"
 	"github.com/kimdre/doco-cd/internal/git/ssh"
 	sourcecache "github.com/kimdre/doco-cd/internal/source/cache"
 )
@@ -29,19 +33,50 @@ func init() {
 	}
 }
 
-// retrier is a shared retry configuration for git operations that may fail
-// due to transient issues like network errors or temporary repository states.
-var retrier = retry.New(
-	retry.Attempts(3),
-	retry.Delay(250*time.Millisecond),
-	retry.DelayType(retry.BackOffDelay),
-	retry.RetryIf(func(err error) bool {
-		_, isURLErr := errors.AsType[*url.Error](err)
-		netErr, isNetErr := errors.AsType[net.Error](err)
+// retryWindow is set by SetRetryWindow. Atomic so a startup call cannot race in-flight clones/fetches.
+var retryWindow atomic.Pointer[time.Duration]
 
-		return isURLErr || (isNetErr && netErr.Timeout())
-	}),
-)
+// SetRetryWindow sets how long remote git operations keep retrying transient errors. Call once at startup.
+func SetRetryWindow(window time.Duration) {
+	retryWindow.Store(&window)
+}
+
+// retrier returns a fresh retrier for one remote operation, so the window starts now.
+func retrier() *retry.Retrier {
+	window := retrywindow.Default
+	if w := retryWindow.Load(); w != nil {
+		window = *w
+	}
+
+	return retry.New(retrywindow.Options(window, isTransientError)...)
+}
+
+// isTransientError reports whether a remote git failure is worth retrying:
+// network errors, timeouts and HTTP 5xx/429 from the server.
+func isTransientError(err error) bool {
+	if _, ok := errors.AsType[*url.Error](err); ok {
+		return true
+	}
+
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
+		return true
+	}
+
+	// go-git wraps non-2xx responses without Unwrap, so dig into the inner error by hand.
+	unexpected, ok := errors.AsType[*plumbing.UnexpectedError](err)
+	if !ok {
+		return false
+	}
+
+	httpErr, ok := errors.AsType[*githttp.Err](unexpected.Err)
+	if !ok || httpErr.Response == nil {
+		return false
+	}
+
+	code := httpErr.Response.StatusCode
+
+	return code >= http.StatusInternalServerError || code == http.StatusTooManyRequests
+}
 
 // updateRemoteURL updates the remote URL of the repository.
 func updateRemoteURL(repo *git.Repository, url string) error {
@@ -181,7 +216,7 @@ func fetchRepositoryLocked(repo *git.Repository, url, ref string, skipTLSVerify 
 	}
 
 	fetchWithRetry := func(opts *git.FetchOptions) error {
-		return retrier.Do(
+		return retrier().Do(
 			func() error {
 				err := repo.Fetch(opts)
 				if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {

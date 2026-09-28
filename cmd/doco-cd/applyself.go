@@ -120,7 +120,7 @@ func initApplierSecretProvider(ctx context.Context, log *logger.Logger, c *app.C
 	err := selfupdate.Retry(ctx, func() error {
 		var err error
 
-		provider, err = secretprovider.Initialize(ctx, c.SecretProvider, app.Version)
+		provider, err = secretprovider.Initialize(ctx, c.SecretProvider, app.Version, c.RetryWindow)
 
 		return err
 	}, func(attempt int, err error) {
@@ -160,7 +160,7 @@ func runSelfBootstrap(ctx context.Context, log *logger.Logger, c *app.Config, do
 		SwarmFeatures: c.DockerSwarmFeatures,
 	})
 
-	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, app.Version)
+	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, app.Version, c.RetryWindow)
 	if err != nil {
 		return fmt.Errorf("initialize the secret provider: %w", err)
 	}

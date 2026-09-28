@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/kimdre/doco-cd/internal/common/retrywindow"
 	"github.com/kimdre/doco-cd/internal/config/app"
 	"github.com/kimdre/doco-cd/internal/secretprovider"
 	"github.com/kimdre/doco-cd/internal/secretprovider/azurekeyvault"
@@ -21,7 +22,7 @@ func TestInitialize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test")
+	secretProvider, err := secretprovider.Initialize(ctx, c.SecretProvider, "v0.0.0-test", c.RetryWindow)
 	if err != nil {
 		if errors.Is(err, bitwardensecretsmanager.ErrNotSupported) {
 			t.Skip(err.Error())
@@ -50,7 +51,7 @@ func TestInitializeAzureKeyVault(t *testing.T) {
 	t.Setenv("AZURE_CLIENT_SECRET", "")
 	t.Setenv("AZURE_CLIENT_SECRET_FILE", secretFile)
 
-	provider, err := secretprovider.Initialize(t.Context(), azurekeyvault.Name, "v0.0.0-test")
+	provider, err := secretprovider.Initialize(t.Context(), azurekeyvault.Name, "v0.0.0-test", retrywindow.Default)
 	if err != nil {
 		t.Fatalf("Initialize() error = %v", err)
 	}

@@ -389,7 +389,7 @@ env_files:
 				t.Fatalf("Failed to verify docker socket connection: %v", err)
 			}
 
-			secretProvider, err := secretprovider.Initialize(ctx, appConfig.SecretProvider, "v0.0.0-test")
+			secretProvider, err := secretprovider.Initialize(ctx, appConfig.SecretProvider, "v0.0.0-test", appConfig.RetryWindow)
 			if err != nil {
 				if errors.Is(err, bitwardensecretsmanager.ErrNotSupported) {
 					t.Skip(err.Error())

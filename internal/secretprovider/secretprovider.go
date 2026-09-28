@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	onepassword "github.com/kimdre/doco-cd/internal/secretprovider/1password"
 	"github.com/kimdre/doco-cd/internal/secretprovider/awssecretsmanager"
@@ -56,9 +57,9 @@ func (f SecretValueProviderFunc) GetSecret(ctx context.Context, id string) (stri
 var ErrUnknownProvider = errors.New("unknown secret provider")
 
 // Initialize initializes the secret provider based on the provided configuration.
-// The returned provider is wrapped with retry logic to handle transient
-// rate-limit errors (HTTP 429) from upstream APIs.
-func Initialize(ctx context.Context, provider, version string) (SecretProvider, error) {
+// The returned provider is wrapped with retry logic for transient upstream
+// errors (rate limits, 5xx, network timeouts) for up to retryWindow per call.
+func Initialize(ctx context.Context, provider, version string, retryWindow time.Duration) (SecretProvider, error) {
 	if provider == "" {
 		return nil, nil
 	}
@@ -136,5 +137,5 @@ func Initialize(ctx context.Context, provider, version string) (SecretProvider, 
 		return nil, err
 	}
 
-	return NewRetryingSecretProvider(p), nil
+	return NewRetryingSecretProvider(p, retryWindow), nil
 }
